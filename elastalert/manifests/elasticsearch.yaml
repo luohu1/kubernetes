@@ -1,0 +1,49 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticsearch
+  labels:
+    app: elasticsearch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      containers:
+      - name: elasticsearch
+        image: elasticsearch:7.7.1
+        ports:
+        - containerPort: 9200
+        env:
+        - name: "ES_JAVA_OPTS"
+          value: "-Xms512m -Xmx512m"
+        - name: "discovery.type"
+          value: "single-node"
+        - name: "bootstrap.memory_lock"
+          value: "true"
+        - name: "action.auto_create_index"
+          value: "true"
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+spec:
+  type: ClusterIP
+  selector:
+    app: elasticsearch
+  ports:
+  - name: http
+    port: 9200
+    protocol: TCP
+    targetPort: 9200
