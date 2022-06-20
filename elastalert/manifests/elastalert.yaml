@@ -1,0 +1,161 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elastalert-config
+data:
+  config.yaml: |-
+    rules_folder: rules/..data/
+    run_every:
+      minutes: 1
+    buffer_time:
+      minutes: 15
+    es_host: elasticsearch
+    es_port: 9200
+    # aws_region: us-east-1
+    # profile: test
+    # es_url_prefix: elasticsearch
+    # use_ssl: True
+    # verify_certs: True
+    # es_send_get_body_as: GET
+    # es_username: someusername
+    # es_password: somepassword
+    # verify_certs: True
+    # ca_certs: /path/to/cacert.pem
+    # client_cert: /path/to/client_cert.pem
+    # client_key: /path/to/client_key.key
+    writeback_index: elastalert_status
+    writeback_alias: elastalert_alerts
+    alert_time_limit:
+      days: 1
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elastalert-config-rules
+data:
+  example.yaml: |-
+    name: example
+    type: frequency
+    index: logstash-*
+    run_every:
+      minutes: 1
+    num_events: 1
+    timeframe:
+      days: 7
+    filter:
+    - query:
+        query_string:
+          query: "message: error OR message: exception"
+    alert:
+    - "debug"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elastalert-modules
+data:
+  __init__.py: ""
+  dingtalk.py: |-
+    import json
+
+    import requests
+    from elastalert.alerts import Alerter, DateTimeEncoder
+    from elastalert.util import EAException
+    from requests.exceptions import RequestException
+
+
+    class DingTalkAlerter(Alerter):
+
+        required_options = frozenset(['dingtalk_webhook', 'dingtalk_msgtype'])
+
+        def __init__(self, rule):
+            super(DingTalkAlerter, self).__init__(rule)
+            self.dingtalk_webhook_url = self.rule['dingtalk_webhook']
+            self.dingtalk_msgtype = self.rule.get('dingtalk_msgtype', 'text')
+            self.dingtalk_isAtAll = self.rule.get('dingtalk_isAtAll', False)
+            self.digtalk_title = self.rule.get('dingtalk_title', '')
+
+        def format_body(self, body):
+            return body.encode('utf8')
+
+        def alert(self, matches):
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json;charset=utf-8"
+            }
+            body = self.create_alert_body(matches)
+            payload = {
+                "msgtype": self.dingtalk_msgtype,
+                "text": {
+                    "content": body
+                },
+                "at": {
+                    "isAtAll": False
+                }
+            }
+            try:
+                response = requests.post(self.dingtalk_webhook_url,
+                                         data=json.dumps(payload, cls=DateTimeEncoder),
+                                         headers=headers)
+                response.raise_for_status()
+            except RequestException as e:
+                raise EAException("Error request to Dingtalk: {0}".format(str(e)))
+
+        def get_info(self):
+            return {
+                "type": "dingtalk",
+                "dingtalk_webhook": self.dingtalk_webhook_url
+            }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elastalert
+  labels:
+    app: elastalert
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elastalert
+  template:
+    metadata:
+      labels:
+        app: elastalert
+    spec:
+      containers:
+      - name: elastalert
+        image: ipyth/elastalert:1.0.2
+        imagePullPolicy: IfNotPresent
+        # args:
+        # - elastalert
+        # - --verbose
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1024Mi
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        volumeMounts:
+        - name: elastalert-config
+          mountPath: /elastalert/config.yaml
+          subPath: config.yaml
+        - name: elastalert-config-rules
+          mountPath: /elastalert/rules/
+        - name: elastalert-modules
+          mountPath: /elastalert/modules/
+      volumes:
+      - name: elastalert-config
+        configMap:
+          name: elastalert-config
+          defaultMode: 420
+      - name: elastalert-config-rules
+        configMap:
+          name: elastalert-config-rules
+          defaultMode: 420
+      - name: elastalert-modules
+        configMap:
+          name: elastalert-modules
+          defaultMode: 420
